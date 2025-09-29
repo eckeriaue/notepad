@@ -1,16 +1,33 @@
-# notepad
+# Notepad
 
-A new Flutter project.
+A simple cross-platform text editor for working with `.txt` files.
 
-## Getting Started
+---
 
-This project is a starting point for a Flutter application.
+## 🚀 Features
 
-A few resources to get you started if this is your first Flutter project:
+- Create and edit text files
+- Open and save `.txt` files
+- Switch between **light / dark** themes
+- Display the currently edited file next to the app name
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+---
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## 🌟 Future Plans
+
+- Support for additional file formats
+- Auto-save and version history
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a branch `feature/your-feature-name`
+3. Make changes and create a Pull Request
+
+---
+
+## 📄 License
+
+MIT License
