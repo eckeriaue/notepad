@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -39,7 +40,7 @@ class _MyAppState extends State<MyApp> {
     setState(() {
       _themeMode = newMode;
     });
-    prefs.setBool('isDark', newMode == ThemeMode.dark);
+    await prefs.setBool('isDark', newMode == ThemeMode.dark);
   }
 
   @override
@@ -66,48 +67,164 @@ class _NotepadScreenState extends State<NotepadScreen> {
   String? _currentFilePath;
   String _appTitle = 'Notepad';
 
-  Future<void> _openFile() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['txt'],
-    );
+  // Проверяем и запрашиваем разрешения для Android
+  Future<bool> _requestStoragePermission() async {
+    if (!Platform.isAndroid) return true; // На macOS и Windows разрешения не нужны
 
-    if (result != null && result.files.single.path != null) {
-      final file = File(result.files.single.path!);
-      final content = await file.readAsString();
+    try {
+      // Для Android < 10 (API 29) запрашиваем Permission.storage
+      if (await Permission.storage.isDenied) {
+        var status = await Permission.storage.request();
+        if (!status.isGranted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Разрешение на доступ к хранилищу отклонено'),
+              action: SnackBarAction(
+                label: 'Открыть настройки',
+                onPressed: () => openAppSettings(),
+              ),
+            ),
+          );
+          return false;
+        }
+      }
+
+      // Для Android 11+ (API 30+), если нужен полный доступ
+      if (await Permission.manageExternalStorage.isDenied) {
+        var status = await Permission.manageExternalStorage.request();
+        if (!status.isGranted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Разрешение на управление хранилищем отклонено'),
+              action: SnackBarAction(
+                label: 'Открыть настройки',
+                onPressed: () => openAppSettings(),
+              ),
+            ),
+          );
+          return false;
+        }
+      }
+
+      // Для Android 13+ (API 33+), если работаем с медиафайлами
+      if (await Permission.storage.isDenied == false) {
+        var mediaStatus = await Permission.storage.request();
+        if (!mediaStatus.isGranted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Разрешение на доступ к медиа отклонено'),
+              action: SnackBarAction(
+                label: 'Открыть настройки',
+                onPressed: () => openAppSettings(),
+              ),
+            ),
+          );
+          return false;
+        }
+      }
+      return true;
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Ошибка при запросе разрешений: $e')),
+      );
+      return false;
+    }
+  }
+
+  // Альтернативный метод сохранения в папку приложения (без разрешений)
+  Future<void> _saveFileToAppDir() async {
+    try {
+      final directory = await getApplicationDocumentsDirectory();
+      final file = File('${directory.path}/new_note.txt');
+      await file.writeAsString(_controller.value.text);
       setState(() {
-        _controller.text = content;
-        _currentFilePath = result.files.single.path;
-        _appTitle = 'Notepad - ${result.files.single.name}';
+        _currentFilePath = file.path;
+        _appTitle = 'Notepad - ${file.uri.pathSegments.last}';
       });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Файл сохранен в ${file.path}')),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Ошибка при сохранении в папку приложения: $e')),
+      );
+    }
+  }
+
+  Future<void> _openFile() async {
+    try {
+      if (!await _requestStoragePermission()) return;
+
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['txt'],
+      );
+      if (result != null && result.files.single.path != null) {
+        final file = File(result.files.single.path!);
+        final content = await file.readAsString();
+        setState(() {
+          _controller.text = content;
+          _currentFilePath = result.files.single.path;
+          _appTitle = 'Notepad - ${result.files.single.name}';
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Файл успешно открыт')),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Ошибка при открытии файла: $e')),
+      );
     }
   }
 
   Future<void> _saveFile() async {
-    if (_currentFilePath != null) {
-      // Сохраняем в существующий файл
-      final file = File(_currentFilePath!);
-      await file.writeAsString(_controller.value.text);
-    } else {
-      // Сохраняем как новый файл
-      final directory = await getApplicationDocumentsDirectory();
-      final defaultPath = '${directory.path}/new_note.txt';
-
-      final savePath = await FilePicker.platform.saveFile(
-        dialogTitle: 'Сохранить как',
-        fileName: 'new_note.txt',
-        type: FileType.custom,
-        allowedExtensions: ['txt'],
-      );
-
-      if (savePath != null) {
-        final file = File(savePath);
-        await file.writeAsString(_controller.value.text);
-        setState(() {
-          _currentFilePath = savePath;
-          _appTitle = 'Notepad - ${file.uri.pathSegments.last}';
-        });
+    try {
+      if (!await _requestStoragePermission()) {
+        // Если разрешения не получены, сохраняем в папку приложения
+        await _saveFileToAppDir();
+        return;
       }
+
+      if (_currentFilePath != null) {
+        final file = File(_currentFilePath!);
+        await file.writeAsString(_controller.value.text);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Файл успешно сохранен')),
+        );
+      } else {
+        String? savePath = await FilePicker.platform.saveFile(
+          dialogTitle: 'Сохранить как',
+          fileName: 'new_note.txt',
+          type: FileType.custom,
+          allowedExtensions: ['txt'],
+          lockParentWindow: true,
+        );
+
+        if (savePath != null) {
+          if (Platform.isAndroid && !savePath.endsWith('.txt')) {
+            savePath = '$savePath.txt';
+          }
+
+          final file = File(savePath);
+          await file.writeAsString(_controller.value.text);
+          setState(() {
+            _currentFilePath = savePath;
+            _appTitle = 'Notepad - ${file.uri.pathSegments.last}';
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Файл успешно сохранен')),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Сохранение отменено')),
+          );
+        }
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Ошибка при сохранении файла: $e')),
+      );
     }
   }
 
@@ -167,5 +284,11 @@ class _NotepadScreenState extends State<NotepadScreen> {
         ),
       ),
     );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
   }
 }
